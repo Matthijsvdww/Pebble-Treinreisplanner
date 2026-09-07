@@ -2,12 +2,12 @@
     "author": "Matthijsvdww",
     "dependencies": {},
     "keywords": [],
-    "name": "ns-reisplanner",
+    "name": "treinreisplanner",
     "pebble": {
         "capabilities": [
             "configurable"
         ],
-        "displayName": "NS Reisplanner",
+        "displayName": "Treinreisplanner",
         "enableMultiJS": true,
         "messageKeys": {
             "Cancelled": 23,
@@ -69,5 +69,5 @@
             "watchface": false
         }
     },
-    "version": "1.1.0"
+    "version": "1.0.0"
 }

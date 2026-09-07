@@ -170,6 +170,11 @@ function sendPicker(trips) {
     msg['T' + i + 'Track'] = o.actualTrack || o.plannedTrack || '?';
     msg['T' + i + 'Delay'] = delayOf(o.plannedDateTime, o.actualDateTime);
   }
+  var crowds = '';
+  for (var ci = 0; ci < n; ci++) {
+    crowds += ((upcoming[ci].legs[0] && upcoming[ci].legs[0].crowdForecast) || '?').charAt(0);
+  }
+  msg['Crowds'] = crowds;
   Pebble.sendAppMessage(msg, function () {},
     function (e) { console.log('picker send failed: ' + e.error.message); });
 }
@@ -424,9 +429,19 @@ function sendCard(trip, ride) {
       var li = legIndex(trip, now);
       if (li >= 0 && li < legRows.length) msg['LegIdx'] = legRows[li];
     }
-    if (ride && trip.legs.length > 1) {
-      var tArr = nsMs(trip.legs[0].destination.actualDateTime || trip.legs[0].destination.plannedDateTime);
-      if (tArr && now < tArr) msg['VibrateAt'] = Math.floor((tArr - 5 * 60000) / 1000);
+    if (ride) {
+      var legs = trip.legs || [];
+      var li2 = legIndex(trip, now);
+      var target = 0;
+      if (legs.length > 1 && li2 === 0) {
+        var tArr = nsMs(legs[0].destination.actualDateTime || legs[0].destination.plannedDateTime);
+        if (tArr && now < tArr) target = tArr - 5 * 60000;      // overstap
+      } else {
+        var ll = legs[legs.length - 1] || {};
+        var fArr = nsMs(ll.destination && (ll.destination.actualDateTime || ll.destination.plannedDateTime));
+        if (fArr && now < fArr) target = fArr - 5 * 60000;      // eindpunt
+      }
+      if (target) msg['VibrateAt'] = Math.floor(target / 1000);
     }
     Pebble.sendAppMessage(msg,
       function () {},

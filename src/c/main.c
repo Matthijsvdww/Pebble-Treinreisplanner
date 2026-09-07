@@ -14,7 +14,7 @@ typedef enum {
   KEY_SEL_TIME = 60, KEY_SEL_TRAIN = 61, KEY_CANCEL = 62,
   KEY_NEXT_ROUTE = 63, KEY_VIBRATE_AT = 65, KEY_ROUTE_LABEL = 70,
   KEY_TIMELINE = 71, KEY_HEAD = 72, KEY_HEAD_STYLE = 73, KEY_LEG_IDX = 74,
-  KEY_WARN_CODE = 75, KEY_DISRUPTION = 96,
+  KEY_WARN_CODE = 75, KEY_DISRUPTION = 96, KEY_CROWDS = 97
 } AppKey;
 
 #define MAX_TRIPS 8
@@ -38,6 +38,8 @@ static TextLayer *s_menu_status;
 static bool s_card_on_top = false;
 static char s_route_label[24];
 static int32_t s_vibrate_at = 0;
+static char s_crowds[MAX_TRIPS + 1] = "";
+static int32_t s_last_vibrate_at = 0;
 static bool s_vibrated = false;
 
 // card: fixed strips + custom-drawn scrollable timeline
@@ -88,6 +90,7 @@ static void check_vibrate(void) {
   if ((int32_t)time(NULL) >= s_vibrate_at) {
     s_vibrated = true;
     s_vibrate_at = 0;
+    persist_write_int(8, 0);
     do_transfer_vibrate();
   }
 }
@@ -123,6 +126,13 @@ static void menu_draw_row(GContext *gctx, const Layer *layer, MenuIndex *idx, vo
   else
     snprintf(row_sub[i], sizeof(row_sub[i]), "sp.%s  op tijd", p_track[i]);
   menu_cell_basic_draw(gctx, layer, row_title[i], row_sub[i], NULL);
+    char cc = s_crowds[i];
+    if (cc == 'L' || cc == 'M' || cc == 'H') {
+      GRect fb = layer_get_bounds(layer);
+      graphics_context_set_fill_color(gctx,
+        cc == 'L' ? GColorGreen : cc == 'M' ? GColorOrange : GColorRed);
+      graphics_fill_circle(gctx, GPoint(fb.size.w - 8, fb.size.h / 2), 4);
+    }
 }
 static void up_click_handler(ClickRecognizerRef ref, void *ctx) {
   menu_layer_set_selected_next(s_menu, true, MenuRowAlignCenter, true);
@@ -419,6 +429,14 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
       t = dict_find(iter, trip_keys[i][3]);
       if (t) p_delay[i] = (int)t->value->int32;
     }
+    Tuple *cr = dict_find(iter, KEY_CROWDS);
+    if (cr) {
+      int k;
+      for (k = 0; k < MAX_TRIPS && cr->value->cstring[k]; k++) s_crowds[k] = cr->value->cstring[k];
+      s_crowds[k] = '\0';
+    } else {
+      s_crowds[0] = '\0';
+    }
     menu_layer_reload_data(s_menu);
     Tuple *dis = dict_find(iter, KEY_DISRUPTION);
     if (dis) {
@@ -426,7 +444,7 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     } else {
       text_layer_set_text(s_menu_status, p_count > 0 ? "Kies je trein:" : "Geen reizen");
     }
-    s_vibrated = false; s_vibrate_at = 0;
+    s_vibrated = false; s_vibrate_at = 0; persist_write_int(8, 0);
     s_leg_row = -1; s_scrolled_row = -1;
   } else if (mt == 2 || mt == 3) { // card (waiting OR riding)
     if (!s_card_on_top) window_stack_push(s_card_window, true);
@@ -469,7 +487,15 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     // keep a fresh snapshot on flash (rate-limited) in case the app dies
     snapshot_save(false);
     Tuple *vat = dict_find(iter, KEY_VIBRATE_AT);
-    if (vat && vat->type == TUPLE_INT) s_vibrate_at = vat->value->int32;
+    if (vat && vat->type == TUPLE_INT && vat->value->int32 > 0) {
+      if (vat->value->int32 != s_last_vibrate_at) {
+        s_last_vibrate_at = vat->value->int32;
+        s_vibrated = false;              // new target (transfer → final): re-arm
+      }
+      s_vibrate_at = vat->value->int32;
+      persist_write_int(8, s_vibrate_at);
+      persist_write_int(9, (int)time(NULL));
+    }
     check_vibrate(); // buzz immediately if the target already passed
   } else if (mt == 4) {
     Tuple *err = dict_find(iter, KEY_ERROR);
@@ -588,6 +614,12 @@ static void card_unload(Window *window) {
 static void init(void) {
   if (persist_read_string(1, s_route_label, sizeof(s_route_label)) == 0)
     snprintf(s_route_label, sizeof(s_route_label), "Route");
+  if (persist_exists(8) && persist_exists(9) &&
+      (int32_t)time(NULL) - persist_read_int(9) < 12 * 3600) {
+    s_vibrate_at = persist_read_int(8);
+    s_last_vibrate_at = s_vibrate_at;
+    s_vibrated = (s_vibrate_at == 0);
+  }
   bool restore = snapshot_load();
   s_menu_window = window_create();
   window_set_window_handlers(s_menu_window, (WindowHandlers) {

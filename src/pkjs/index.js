@@ -44,6 +44,14 @@ var pickerCache = [];       // [{hhmm, num, ctx, iso}]
 var notFoundSent = false;
 var tripSyncErrSent = false;
 var pollTimer = null;
+var DISR_URL = 'https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/disruptions';
+var DISR_CACHE_MS = 5 * 60000;
+var disrCache = null;       // { at, list }
+var disrFetching = false;
+var disrLast = '';          // last status we actually pushed
+var lastTrip = null;
+var lastRide = false;
+var lastPickerTrips = null;
 
 function setPoll(ms) {
   if (pollTimer) clearInterval(pollTimer);
@@ -145,13 +153,16 @@ function currentLegIndex(trip, nowMs) {
 function sendError(msg) { Pebble.sendAppMessage({ 'MsgType': 4, 'Error': msg }); }
 
 function sendPicker(trips) {
+  lastPickerTrips = trips;
   var cutoff = Date.now() - 60000;
   var upcoming = trips.filter(function (t) {
     return nsMs(t.legs[0].origin.plannedDateTime) >= cutoff;
   });
-  if (upcoming.length === 0) upcoming = trips.slice(0, 4);
-  var n = Math.min(upcoming.length, 4);
+  if (upcoming.length === 0) upcoming = trips.slice(0, 8);
+  var n = Math.min(upcoming.length, 8);
   var msg = { 'MsgType': 1, 'ItemCount': n, 'RouteLabel': activeRoute().label };
+  var ds = currentDisruptionText();
+  if (ds) msg['Disruption'] = ds;
   for (var i = 0; i < n; i++) {
     var leg = upcoming[i].legs[0], o = leg.origin;
     msg['T' + i + 'Time']  = nsTime(o.plannedDateTime);
@@ -161,6 +172,77 @@ function sendPicker(trips) {
   }
   Pebble.sendAppMessage(msg, function () {},
     function (e) { console.log('picker send failed: ' + e.error.message); });
+}
+function stripAcc(s) {
+  return (s || '').toLowerCase()
+    .replace(/[àáâãäå]/g, 'a').replace(/[èéêë]/g, 'e')
+    .replace(/[ìíîï]/g, 'i').replace(/[òóôõö]/g, 'o')
+    .replace(/[ùúûü]/g, 'u').replace(/ç/g, 'c')
+    .replace(/ñ/g, 'n').replace(/æ/g, 'ae').replace(/œ/g, 'oe')
+    .replace(/\s+/g, ' ').trim();
+}
+
+function routeStationNames() {
+  var names = [];
+  function add(n) {
+    n = stripAcc(n);
+    if (n && names.indexOf(n) < 0) names.push(n);
+  }
+  // Route label: "Rijssen → Gouda" or "Rijssen -> Gouda"
+  String(activeRoute().label).split(/\s*(?:->|→|>|naar)\s*/).forEach(add);
+  // Full station names from the current trip, so disruptions at
+  // intermediate stations (Deventer, Utrecht) match too
+  if (lastTrip && active) {
+    (lastTrip.legs || []).forEach(function (leg) {
+      add(leg.origin && leg.origin.name);
+      add(leg.destination && leg.destination.name);
+      (leg.stops || []).forEach(function (st) { add(st.name); });
+    });
+  }
+  return names;
+}
+
+function disruptionMatches(d) {
+  if (!d) return false;
+  if (d.isNational) return true;
+  var route = activeRoute();
+  if (Array.isArray(d.stations)) {
+    for (var i = 0; i < d.stations.length; i++) {
+      var code = String((d.stations[i] && d.stations[i].code) || '').toLowerCase();
+      if (code && (code === String(route.from).toLowerCase() ||
+                   code === String(route.to).toLowerCase())) return true;
+    }
+  }
+  var hay = stripAcc(((d.title || '') + ' ' + (d.topic || '') + ' ' + (d.cause || '')).replace(/\s+/g, ' '));
+  var names = routeStationNames();
+  for (var n = 0; n < names.length; n++) {
+    var nm = names[n];
+    if (nm.length >= 3 && hay.indexOf(nm) >= 0) return true;
+  }
+  return false;
+}
+
+function formatDisruption(d) {
+  var kind = d.type === 'MAINTENANCE' ? 'Werkzaamheden' :
+             d.type === 'CALAMITY' ? 'Calamiteit' : 'Storing';
+  return '!! ' + kind + (d.title ? ': ' + d.title : '');
+}
+
+function currentDisruptionText() {
+  if (!disrCache || !disrCache.list) return '';
+  for (var i = 0; i < disrCache.list.length; i++) {
+    var d = disrCache.list[i];
+    if (d && d.isActive !== false && disruptionMatches(d)) return formatDisruption(d);
+  }
+  return '';
+}
+
+function maybePushDisruptionUpdate() {
+  var txt = currentDisruptionText();
+  if (txt === disrLast) return;
+  disrLast = txt;
+  if (active && lastTrip) sendCard(lastTrip, lastRide);
+  else if (!active && lastPickerTrips) sendPicker(lastPickerTrips);
 }
 
 // ============ CARD BUILDERS (NS-style, v2) ============
@@ -321,9 +403,13 @@ function tripWarnCode(trip) {
 }
 function sendCard(trip, ride) {
   try {
+    lastTrip = trip;
+    lastRide = ride;
     var now = Date.now();
     var head = buildHead(trip, now, ride);
     var lines = buildLines(trip, now).filter(Boolean);
+    var ds = currentDisruptionText();
+    if (ds && lines[0] !== ds) lines.unshift(ds);
     var tl = lines.slice(0, 24).join('\n');
     var msg = {
       'MsgType': ride ? 3 : 2,
@@ -370,6 +456,7 @@ function fetchAndRoute() {
 }
 
 function fetchTrackedTrip() {
+  fetchDisruptionsIfStale();
   var key = getApiKey();
   if (!key) { sendError('Geen API key'); return; }
   var url = TRIP_BASE + '?ctxRecon=' + encodeURIComponent(active.ctxRecon);
@@ -396,6 +483,7 @@ function fetchTrackedTrip() {
 }
 
 function fetchList() {
+  fetchDisruptionsIfStale();
   var key = getApiKey();
   if (!key) { sendError('Geen API key'); return; }
   var route = activeRoute();
@@ -425,6 +513,29 @@ function fetchList() {
     handleTrip(trip);
   };
   req.onerror = function () { sendError('Geen verbinding'); };
+  req.send();
+}
+
+function fetchDisruptionsIfStale() {
+  if (!getApiKey() || disrFetching) return;
+  if (disrCache && Date.now() - disrCache.at < DISR_CACHE_MS) return;
+  disrFetching = true;
+  var req = new XMLHttpRequest();
+  req.open('GET', DISR_URL, true);
+  req.setRequestHeader('Ocp-Apim-Subscription-Key', getApiKey());
+  req.onload = function () {
+    disrFetching = false;
+    if (req.status >= 400) return;   // silent — optional feature
+    try {
+      var data = JSON.parse(req.responseText);
+      disrCache = {
+        at: Date.now(),
+        list: Array.isArray(data) ? data : (data.disruptions || [])
+      };
+      maybePushDisruptionUpdate();
+    } catch (e) { /* ignore malformed */ }
+  };
+  req.onerror = function () { disrFetching = false; };  // silent
   req.send();
 }
 

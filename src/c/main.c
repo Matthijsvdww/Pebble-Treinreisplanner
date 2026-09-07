@@ -7,13 +7,17 @@ typedef enum {
   KEY_T1_TIME = 44, KEY_T1_TRAIN = 45, KEY_T1_TRACK = 46, KEY_T1_DELAY = 47,
   KEY_T2_TIME = 48, KEY_T2_TRAIN = 49, KEY_T2_TRACK = 50, KEY_T2_DELAY = 51,
   KEY_T3_TIME = 52, KEY_T3_TRAIN = 53, KEY_T3_TRACK = 54, KEY_T3_DELAY = 55,
+  KEY_T4_TIME = 76, KEY_T4_TRAIN = 77, KEY_T4_TRACK = 78, KEY_T4_DELAY = 79,
+  KEY_T5_TIME = 80, KEY_T5_TRAIN = 81, KEY_T5_TRACK = 82, KEY_T5_DELAY = 83,
+  KEY_T6_TIME = 84, KEY_T6_TRAIN = 85, KEY_T6_TRACK = 86, KEY_T6_DELAY = 87,
+  KEY_T7_TIME = 88, KEY_T7_TRAIN = 89, KEY_T7_TRACK = 90, KEY_T7_DELAY = 91,
   KEY_SEL_TIME = 60, KEY_SEL_TRAIN = 61, KEY_CANCEL = 62,
   KEY_NEXT_ROUTE = 63, KEY_VIBRATE_AT = 65, KEY_ROUTE_LABEL = 70,
   KEY_TIMELINE = 71, KEY_HEAD = 72, KEY_HEAD_STYLE = 73, KEY_LEG_IDX = 74,
-  KEY_WARN_CODE = 75
+  KEY_WARN_CODE = 75, KEY_DISRUPTION = 96,
 } AppKey;
 
-#define MAX_TRIPS 4
+#define MAX_TRIPS 8
 
 // timeline layout
 #define TL_W 200
@@ -382,11 +386,23 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     Tuple *cnt = dict_find(iter, KEY_ITEM_COUNT);
     p_count = cnt ? (int)cnt->value->int32 : 0;
     if (p_count > MAX_TRIPS) p_count = MAX_TRIPS;
-    for (int i = 0; i < p_count; i++) {
+    // trip keys are NOT contiguous (76-91 has a gap after 55),
+    // so use a table instead of KEY_T0_TIME + i * 4
+    static const uint32_t trip_keys[8][4] = {
+      { KEY_T0_TIME, KEY_T0_TRAIN, KEY_T0_TRACK, KEY_T0_DELAY },
+      { KEY_T1_TIME, KEY_T1_TRAIN, KEY_T1_TRACK, KEY_T1_DELAY },
+      { KEY_T2_TIME, KEY_T2_TRAIN, KEY_T2_TRACK, KEY_T2_DELAY },
+      { KEY_T3_TIME, KEY_T3_TRAIN, KEY_T3_TRACK, KEY_T3_DELAY },
+      { KEY_T4_TIME, KEY_T4_TRAIN, KEY_T4_TRACK, KEY_T4_DELAY },
+      { KEY_T5_TIME, KEY_T5_TRAIN, KEY_T5_TRACK, KEY_T5_DELAY },
+      { KEY_T6_TIME, KEY_T6_TRAIN, KEY_T6_TRACK, KEY_T6_DELAY },
+      { KEY_T7_TIME, KEY_T7_TRAIN, KEY_T7_TRACK, KEY_T7_DELAY }
+    };
+    for (int i = 0; i < p_count && i < 8; i++) {
       Tuple *t;
-      t = dict_find(iter, KEY_T0_TIME + i * 4);
+      t = dict_find(iter, trip_keys[i][0]);
       if (t) copy_str(p_time[i], sizeof(p_time[i]), t->value->cstring);
-      t = dict_find(iter, KEY_T0_TRAIN + i * 4);
+      t = dict_find(iter, trip_keys[i][1]);
       if (t) {
         const char *s = t->value->cstring;
         char *sp = strchr(s, ' ');
@@ -398,13 +414,18 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
           copy_str(p_num[i], sizeof(p_num[i]), "");
         }
       }
-      t = dict_find(iter, KEY_T0_TRACK + i * 4);
+      t = dict_find(iter, trip_keys[i][2]);
       if (t) copy_str(p_track[i], sizeof(p_track[i]), t->value->cstring);
-      t = dict_find(iter, KEY_T0_DELAY + i * 4);
+      t = dict_find(iter, trip_keys[i][3]);
       if (t) p_delay[i] = (int)t->value->int32;
     }
     menu_layer_reload_data(s_menu);
-    text_layer_set_text(s_menu_status, p_count > 0 ? "Kies je trein:" : "Geen reizen");
+    Tuple *dis = dict_find(iter, KEY_DISRUPTION);
+    if (dis) {
+      text_layer_set_text(s_menu_status, dis->value->cstring);
+    } else {
+      text_layer_set_text(s_menu_status, p_count > 0 ? "Kies je trein:" : "Geen reizen");
+    }
     s_vibrated = false; s_vibrate_at = 0;
     s_leg_row = -1; s_scrolled_row = -1;
   } else if (mt == 2 || mt == 3) { // card (waiting OR riding)

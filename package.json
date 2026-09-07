@@ -58,7 +58,17 @@
         },
         "projectType": "native",
         "resources": {
-            "media": []
+            "media": [
+                {
+                    "file": "images/icon app.png",
+                    "menuIcon": true,
+                    "name": "icon",
+                    "targetPlatforms": [
+                        "emery"
+                    ],
+                    "type": "png"
+                }
+            ]
         },
         "sdkVersion": "3",
         "targetPlatforms": [
@@ -69,5 +79,5 @@
             "watchface": false
         }
     },
-    "version": "1.0.0"
+    "version": "1.2.0"
 }

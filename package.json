@@ -60,13 +60,13 @@
         "resources": {
             "media": [
                 {
-                    "file": "images/icon app.png",
+                    "file": "images/icon",
                     "menuIcon": true,
-                    "name": "icon",
+                    "name": "appicon",
                     "targetPlatforms": [
                         "emery"
                     ],
-                    "type": "png"
+                    "type": "bitmap"
                 }
             ]
         },
@@ -79,5 +79,5 @@
             "watchface": false
         }
     },
-    "version": "1.2.0"
+    "version": "1.2.1"
 }

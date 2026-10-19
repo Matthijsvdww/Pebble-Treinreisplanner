@@ -80,6 +80,8 @@ static void copy_str(char *dst, int n, const char *src) {
 }
 
 // ---------- TRANSFER VIBRATION ----------
+static void snapshot_clear(void);
+
 static void do_transfer_vibrate(void) {
   static const uint32_t seg[] = { 400, 150, 400, 150, 400 };
   VibePattern pat = { .durations = seg, .num_segments = ARRAY_LENGTH(seg) };
@@ -193,7 +195,7 @@ static void menu_click_config_provider(void *ctx) {
 // ---------- CARD BUTTONS ----------
 static void card_back_handler(ClickRecognizerRef ref, void *ctx) {
   snapshot_clear();
-  s_last_warn = 0; s_leg_row = -1; s_ns_row = -1;
+  s_last_warn = 0; s_leg_row = -1;
   s_vibrate_at = 0; s_vibrated = false;   // ← v1.5 hook 4
   wakeup_cancel_all();                    // ← v1.5 hook 4
   DictionaryIterator *iter;
@@ -646,7 +648,8 @@ static void init(void) {
     s_vibrate_at = persist_read_int(8);
     s_last_vibrate_at = s_vibrate_at;
     s_vibrated = (s_vibrate_at == 0);
-    wakeup_service_subscribe(wakeup_handler); + schedule_auto_wake(s_vibrate_at);
+    wakeup_service_subscribe(wakeup_handler);
+    schedule_auto_wake(s_vibrate_at);
   }
   bool restore = snapshot_load();
   s_menu_window = window_create();

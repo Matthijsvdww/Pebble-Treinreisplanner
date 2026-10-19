@@ -95,6 +95,28 @@ static void check_vibrate(void) {
   }
 }
 
+// ---------- AUTO-WAKE (v1.5) ----------
+#define WAKEUP_COOKIE 1
+
+static void wakeup_handler(WakeupId id, int32_t cookie) {
+  // OS launched/woke the app ~10 min before the buzz target.
+  // Cold launch: init() restores the card + persisted buzz target;
+  // PKJS fetches fresh data if the phone allows. Nothing else needed.
+  APP_LOG(APP_LOG_LEVEL_INFO, "WAKE fired cookie=%d", (int)cookie);
+}
+
+static void schedule_auto_wake(int32_t target) {
+  wakeup_cancel_all();                            // exactly one wakeup, ever
+  if (target == 0) return;
+  if ((uint32_t)target <= (uint32_t)time(NULL)) return; // already arrived
+  uint32_t wake_at = (uint32_t)target - 5 * 60;   // 10 min before arrival
+  time_t now = time(NULL);
+  if (wake_at < (uint32_t)now + 90) wake_at = (uint32_t)now + 90; // min 90s out
+  WakeupId id = wakeup_schedule(wake_at, WAKEUP_COOKIE, false);
+  APP_LOG(APP_LOG_LEVEL_INFO, "WAKE sched in %ds (id=%d)",
+          (int)(wake_at - (uint32_t)now), (int)id);
+}
+
 // ---------- CLOCK ----------
 static void update_clock(void) {
   static char buf[8];
@@ -170,7 +192,10 @@ static void menu_click_config_provider(void *ctx) {
 
 // ---------- CARD BUTTONS ----------
 static void card_back_handler(ClickRecognizerRef ref, void *ctx) {
-  s_card_cancelled = true;   // tracking stops; drop the snapshot
+  snapshot_clear();
+  s_last_warn = 0; s_leg_row = -1; s_ns_row = -1;
+  s_vibrate_at = 0; s_vibrated = false;   // ← v1.5 hook 4
+  wakeup_cancel_all();                    // ← v1.5 hook 4
   DictionaryIterator *iter;
   static int one = 1;
   if (app_message_outbox_begin(&iter) == APP_MSG_OK) {
@@ -445,6 +470,7 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
       text_layer_set_text(s_menu_status, p_count > 0 ? "Kies je trein:" : "Geen reizen");
     }
     s_vibrated = false; s_vibrate_at = 0; persist_write_int(8, 0);
+    wakeup_cancel_all();
     s_leg_row = -1; s_scrolled_row = -1;
   } else if (mt == 2 || mt == 3) { // card (waiting OR riding)
     if (!s_card_on_top) window_stack_push(s_card_window, true);
@@ -495,6 +521,7 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
       s_vibrate_at = vat->value->int32;
       persist_write_int(8, s_vibrate_at);
       persist_write_int(9, (int)time(NULL));
+      schedule_auto_wake(s_vibrate_at);
     }
     check_vibrate(); // buzz immediately if the target already passed
   } else if (mt == 4) {
@@ -619,6 +646,7 @@ static void init(void) {
     s_vibrate_at = persist_read_int(8);
     s_last_vibrate_at = s_vibrate_at;
     s_vibrated = (s_vibrate_at == 0);
+    wakeup_service_subscribe(wakeup_handler); + schedule_auto_wake(s_vibrate_at);
   }
   bool restore = snapshot_load();
   s_menu_window = window_create();

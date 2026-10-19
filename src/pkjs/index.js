@@ -430,16 +430,17 @@ function sendCard(trip, ride) {
       if (li >= 0 && li < legRows.length) msg['LegIdx'] = legRows[li];
     }
     if (ride) {
+      // v1.5: arm buzz + auto-wake while WAITING and RIDING
       var legs = trip.legs || [];
-      var li2 = legIndex(trip, now);
+      var li2 = currentLegIndex(trip, now);
       var target = 0;
-      if (legs.length > 1 && li2 === 0) {
+      var lastDest = (legs[legs.length - 1] || {}).destination || {};
+      var fArr = nsMs(lastDest.actualDateTime || lastDest.plannedDateTime);
+      if (li2 <= 0 && legs.length > 1) {
         var tArr = nsMs(legs[0].destination.actualDateTime || legs[0].destination.plannedDateTime);
-        if (tArr && now < tArr) target = tArr - 5 * 60000;      // overstap
-      } else {
-        var ll = legs[legs.length - 1] || {};
-        var fArr = nsMs(ll.destination && (ll.destination.actualDateTime || ll.destination.plannedDateTime));
-        if (fArr && now < fArr) target = fArr - 5 * 60000;      // eindpunt
+        if (tArr && now < tArr) target = tArr - 5 * 60000;   // overstap
+    } else if (fArr && now < fArr) {
+        target = fArr - 5 * 60000;                           // eindpunt
       }
       if (target) msg['VibrateAt'] = Math.floor(target / 1000);
     }
